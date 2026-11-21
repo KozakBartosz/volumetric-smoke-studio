@@ -1,0 +1,78 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #070205;
+  color: #f3e8ee;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif;
+  user-select: none;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  pointer-events: none;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(12, 4, 9, 0.58);
+  border: 1px solid rgba(232, 23, 84, 0.22);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.hud-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #fff0f5;
+}
+
+.hud-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(243, 212, 224, 0.72);
+}
+
+.hud-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(243, 212, 224, 0.48);
+}
+
+/* Custom lil-gui theme */
+.lil-gui.root {
+  --background-color: rgba(15, 6, 11, 0.86);
+  --text-color: #f2dfe8;
+  --title-background-color: rgba(34, 10, 22, 0.92);
+  --title-text-color: #ffd9e6;
+  --widget-color: rgba(66, 22, 42, 0.72);
+  --hover-color: rgba(98, 28, 58, 0.85);
+  --focus-color: rgba(135, 34, 74, 0.95);
+  --number-color: #ff6b9a;
+  --string-color: #ff9bbd;
+  --font-size: 11.5px;
+  --input-font-size: 11.5px;
+  --width: 310px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(232, 23, 84, 0.24);
+  border-radius: 10px;
+  top: 12px;
+  right: 12px;
+  max-height: calc(100vh - 24px);
+}
