@@ -1,5 +1,7 @@
 # Volumetric Smoke Studio
 
+**[Live Demo →](https://kozakbartosz.github.io/volumetric-smoke-studio/)**
+
 Real-time volumetric smoke & cloud raymarching built with **Three.js WebGPU / TSL** (with automatic WebGL2 fallback), **TypeScript**, and **Vite**.
 
 ![Volumetric Smoke Studio](./preview.png)
