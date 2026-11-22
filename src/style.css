@@ -35,11 +35,40 @@ canvas {
   -webkit-backdrop-filter: blur(10px);
 }
 
+.hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .hud-title {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #fff0f5;
+}
+
+.hud-link {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffd9e6;
+  text-decoration: none;
+  background: rgba(232, 23, 84, 0.16);
+  border: 1px solid rgba(232, 23, 84, 0.32);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.hud-link:hover {
+  background: rgba(232, 23, 84, 0.34);
+  border-color: rgba(255, 107, 154, 0.65);
+  color: #ffffff;
 }
 
 .hud-sub {
