@@ -1,5 +1,7 @@
+export type MouseDepthMode = 'dome' | 'plane' | 'tunnel';
+
 export interface CloudPreset {
-	// Optional performance & cube overrides
+	// Optional performance, cube & mouse overrides
 	renderScale?: number;
 	jitter?: number;
 	showCube?: boolean;
@@ -9,6 +11,19 @@ export interface CloudPreset {
 	cubeSize?: number;
 	cubeColor?: string;
 	cubeRotate?: boolean;
+	mouseEnabled?: boolean;
+	mouseDepthMode?: MouseDepthMode;
+	mouseDomeStrength?: number;
+	mouseDepthOffset?: number;
+	mouseClampToSmoke?: boolean;
+	mouseRadius?: number;
+	mousePush?: number;
+	mouseDrag?: number;
+	mouseSwirl?: number;
+	mouseTurbulence?: number;
+	mouseDisperse?: number;
+	mouseDelay?: number;
+	mouseRecovery?: number;
 
 	// Colors
 	shadowColor: string;
@@ -66,8 +81,6 @@ export interface CloudPreset {
 	falloffPower: number;
 	seed: number;
 }
-
-export type MouseDepthMode = 'dome' | 'plane' | 'tunnel';
 
 export interface CloudState extends CloudPreset {
 	preset: string;

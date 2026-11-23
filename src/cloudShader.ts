@@ -103,8 +103,7 @@ export function createVolumetricCloudMaterial(
 		// Painted 3D Fluid Wake Field (O(1) single texture fetch per active step)
 		mouseActive: uniform( 0.0 ),
 		mouseDisperse: uniform( initialParams.mouseDisperse ),
-		mouseTurbulence: uniform( initialParams.mouseTurbulence ),
-		mouseClampToSmoke: uniform( initialParams.mouseClampToSmoke ? 1.0 : 0.0 )
+		mouseTurbulence: uniform( initialParams.mouseTurbulence )
 	};
 
 	const baseTexNode = texture3D( baseTexture, null, 0 );
@@ -177,36 +176,23 @@ export function createVolumetricCloudMaterial(
 			const advectedUvw = vec3( baseUvw ).toVar();
 			const centerDisperse = float( 0.0 ).toVar();
 			const wakeEnergy = float( 0.0 ).toVar();
-			const origMask = float( 1.0 ).toVar();
 
 			// O(1) painted 3D wind/wake field lookup (skipped completely when idle!)
 			If( uniforms.mouseActive.greaterThan( 0.001 ), () => {
 
-				// Optional mask prevents pulling ghost smoke into empty air outside the cloud
-				If( uniforms.mouseClampToSmoke.greaterThan( 0.5 ), () => {
-
-					const origVal = float( baseTexNode.sample( baseUvw ).r );
-					origMask.assign( smoothstep( edgeLow.sub( 0.06 ), edgeLow.add( 0.05 ), origVal ) );
-
-				} );
-
-				If( origMask.greaterThan( 0.001 ), () => {
-
-					const fieldSample = interactionTexNode.sample( baseUvw );
-					const rawDisp = fieldSample.rgb.sub( 0.5 ).mul( 2.0 );
-					const disp = rawDisp.mul( 0.36 ).mul( origMask );
-					advectedUvw.subAssign( disp );
-					centerDisperse.assign( fieldSample.a.mul( uniforms.mouseDisperse ) );
-					wakeEnergy.assign( clamp( max( length( rawDisp ), fieldSample.a ), 0.0, 1.0 ).mul( origMask ) );
-
-				} );
+				const fieldSample = interactionTexNode.sample( baseUvw );
+				const rawDisp = fieldSample.rgb.sub( 0.5 ).mul( 2.0 );
+				const disp = rawDisp.mul( 0.36 );
+				advectedUvw.assign( clamp( baseUvw.sub( disp ), vec3( 0.01 ), vec3( 0.99 ) ) );
+				centerDisperse.assign( fieldSample.a.mul( uniforms.mouseDisperse ) );
+				wakeEnergy.assign( clamp( max( length( rawDisp ), fieldSample.a ), 0.0, 1.0 ) );
 
 			} );
 
 			// Fast coarse empty-space check on advected coordinates (1 fetch in empty air)
 			const coarseVal = float( baseTexNode.sample( advectedUvw ).r );
 
-			If( coarseVal.greaterThan( emptyCutoff ).and( origMask.greaterThan( 0.001 ) ), () => {
+			If( coarseVal.greaterThan( emptyCutoff ), () => {
 
 				// Single packed RGBA fetch: RGB = 3D warp vector, A = detail erosion
 				// Locally boosts swirling turbulence right around the cursor wake (0 extra fetches!)
@@ -219,12 +205,13 @@ export function createVolumetricCloudMaterial(
 				const eroded = baseVal
 					.sub( detailSample.a.oneMinus().mul( uniforms.detailStrength ).mul( 0.48 ) )
 					.sub( centerDisperse.mul( 0.38 ) );
-				const density = smoothstep( edgeLow, edgeHigh, eroded ).mul( uniforms.opacity ).mul( origMask ).toVar();
+				const density = smoothstep( edgeLow, edgeHigh, eroded ).mul( uniforms.opacity ).toVar();
 
 				If( density.greaterThan( 0.002 ), () => {
 
 					// 3-tap exponentially spaced shadow march on base volume (3 fetches total)
-					const s1 = smoothstep( edgeLow, edgeHigh, float( baseTexNode.sample( warpedUvw.add( dStep1 ) ).r ) );
+					const s1Raw = float( baseTexNode.sample( warpedUvw.add( dStep1 ) ).r );
+					const s1 = smoothstep( edgeLow, edgeHigh, s1Raw );
 					const s2 = smoothstep( edgeLow, edgeHigh, float( baseTexNode.sample( warpedUvw.add( dStep2 ) ).r ) );
 					const s3 = smoothstep( edgeLow, edgeHigh, float( baseTexNode.sample( warpedUvw.add( dStep3 ) ).r ) );
 
@@ -235,8 +222,8 @@ export function createVolumetricCloudMaterial(
 
 					const lightTransmittance = exp( shadowAccum.negate().mul( uniforms.shadowAbsorption ) );
 
-					// Free micro-relief directional derivative using tap 1 (0 extra fetches)
-					const relief = clamp( eroded.sub( s1 ).mul( uniforms.reliefStrength ).add( 0.5 ), 0.0, 1.0 );
+					// Smooth micro-relief from raw un-thresholded values (eliminates stipple/dither lines on sharp edges!)
+					const relief = clamp( baseVal.sub( s1Raw ).mul( uniforms.reliefStrength ).mul( 2.4 ).add( 0.5 ), 0.0, 1.0 );
 
 					// Powder effect darkens dense smoke creases
 					const powder = mix( float( 1.0 ), float( 1.0 ).sub( exp( density.negate().mul( uniforms.powderStrength ).mul( 3.0 ) ) ), 0.45 );

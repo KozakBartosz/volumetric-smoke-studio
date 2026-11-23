@@ -16,7 +16,7 @@ import {
 } from './cloudShader';
 import { SmokeInteractionField } from './interactionField';
 
-const DEFAULT_PRESET_NAME = 'Dark Amaranth v2 (Custom)';
+const DEFAULT_PRESET_NAME = 'Dark Amaranth v3 (Custom)';
 
 const state: CloudState = {
 	preset: DEFAULT_PRESET_NAME,
@@ -41,7 +41,7 @@ const state: CloudState = {
 	mouseSwirl: 1.0,
 	mouseTurbulence: 0.15,
 	mouseDisperse: 0.8,
-	mouseDelay: 0.05,
+	mouseDelay: 0.24,
 	mouseRecovery: 0.52,
 	...PRESETS[ DEFAULT_PRESET_NAME ]
 };
@@ -71,18 +71,21 @@ const worldLightDir = new THREE.Vector3();
 const localLightDir = new THREE.Vector3();
 const invQuat = new THREE.Quaternion();
 
-// 32x32x32 3D painted fluid wake field + delayed wind gust queue
+// 32x32x32 3D painted fluid wake field + progressive wind gust ramp
 const interactionField = new SmokeInteractionField( 32 );
-interface DelayedWindSample {
+interface ProgressiveGust {
 	from: THREE.Vector3;
 	to: THREE.Vector3;
 	camDir: THREE.Vector3;
 	mode: CloudState['mouseDepthMode'];
-	readyAt: number;
+	intensity: number;
+	elapsed: number;
+	duration: number;
 }
-const pendingWindQueue: DelayedWindSample[] = [];
+const activeGusts: ProgressiveGust[] = [];
 let isPointerDown = false;
 let hasLastHit = false;
+let brushCarry = 0;
 const lastLocalHit = new THREE.Vector3();
 const raycaster = new THREE.Raycaster();
 const pointerNdc = new THREE.Vector2();
@@ -197,7 +200,6 @@ function syncUniformsFromState(): void {
 	shaderUniforms.warpScale.value = state.warpScale;
 	shaderUniforms.mouseDisperse.value = state.mouseDisperse;
 	shaderUniforms.mouseTurbulence.value = state.mouseTurbulence;
-	shaderUniforms.mouseClampToSmoke.value = state.mouseClampToSmoke ? 1.0 : 0.0;
 
 	if ( cloudMesh ) {
 
@@ -380,14 +382,14 @@ function buildGUI(): void {
 	} );
 	mouseFolder.add( state, 'mouseDomeStrength', 0, 1.0, 0.05 ).name( 'Dome Curve (0=Mid)' );
 	mouseFolder.add( state, 'mouseDepthOffset', - 0.45, 0.45, 0.01 ).name( 'Depth Offset (Z)' );
-	mouseFolder.add( state, 'mouseClampToSmoke' ).name( 'No Ghost Smoke' ).onChange( syncUniformsFromState );
+	mouseFolder.add( state, 'mouseClampToSmoke' ).name( 'No Ghost Smoke' );
 	mouseFolder.add( state, 'mouseRadius', 0.02, 0.25, 0.005 ).name( 'Brush Radius' );
 	mouseFolder.add( state, 'mousePush', 0, 0.6, 0.01 ).name( 'Outward Scatter' );
 	mouseFolder.add( state, 'mouseDrag', 0, 0.9, 0.01 ).name( 'Swipe Flow' );
 	mouseFolder.add( state, 'mouseDisperse', 0, 1.0, 0.02 ).name( 'Center Disperse' ).onChange( syncUniformsFromState );
 	mouseFolder.add( state, 'mouseSwirl', 0, 1.8, 0.02 ).name( 'Vortex Swirl' );
 	mouseFolder.add( state, 'mouseTurbulence', 0, 0.65, 0.01 ).name( 'Wake Turbulence' ).onChange( syncUniformsFromState );
-	mouseFolder.add( state, 'mouseDelay', 0, 0.5, 0.01 ).name( 'Wind Delay (s)' );
+	mouseFolder.add( state, 'mouseDelay', 0, 1.0, 0.01 ).name( 'Wind Buildup (s)' );
 	mouseFolder.add( state, 'mouseRecovery', 0.06, 1.5, 0.02 ).name( 'Fade Speed' );
 
 	// Test Cube (for checking volumetric wrapping around 3D models)
@@ -465,8 +467,12 @@ async function init(): Promise<void> {
 	sceneDirLight = new THREE.DirectionalLight( state.lightColor, state.lightIntensity * 1.4 );
 	scene.add( sceneDirLight );
 
-	sceneAmbLight = new THREE.AmbientLight( state.ambientColor, Math.max( 0.35, state.ambientIntensity * 2.2 ) );
+	sceneAmbLight = new THREE.AmbientLight( state.ambientColor, Math.max( 0.45, state.ambientIntensity * 2.2 ) );
 	scene.add( sceneAmbLight );
+
+	// Soft neutral hemisphere fill so unlit cube faces remain readable instead of pitch black
+	const cubeFillLight = new THREE.HemisphereLight( 0xdbe4f0, 0x483a46, 0.85 );
+	scene.add( cubeFillLight );
 
 	// Test cube sitting inside the smoke to demonstrate depth-aware wrapping
 	const cubeMat = new THREE.MeshStandardNodeMaterial( {
@@ -529,22 +535,41 @@ async function init(): Promise<void> {
 
 		isPointerDown = true;
 		hasLastHit = false;
+		brushCarry = 0;
 
 	} );
 	window.addEventListener( 'pointerup', () => {
 
 		isPointerDown = false;
 		hasLastHit = false;
+		brushCarry = 0;
 
 	} );
 	renderer.domElement.addEventListener( 'pointerleave', () => {
 
 		hasLastHit = false;
+		brushCarry = 0;
 
 	} );
 	renderer.domElement.addEventListener( 'pointermove', onPointerMove );
 
 	renderer.setAnimationLoop( animate );
+
+}
+
+function sampleCloudDensityCPU( localPos: THREE.Vector3 ): number {
+
+	if ( ! cloudTexture ) return 0;
+	const data = cloudTexture.image.data as Uint8Array;
+	const size = cloudTexture.image.width;
+
+	const ix = Math.floor( ( localPos.x + 0.5 ) * size );
+	const iy = Math.floor( ( localPos.y + 0.5 ) * size );
+	const iz = Math.floor( ( localPos.z + 0.5 ) * size );
+
+	if ( ix < 0 || ix >= size || iy < 0 || iy >= size || iz < 0 || iz >= size ) return 0;
+
+	return data[ ( iz * size + iy ) * size + ix ] / 255;
 
 }
 
@@ -602,24 +627,59 @@ function onPointerMove( event: PointerEvent ): void {
 
 		lastLocalHit.copy( localHit );
 		hasLastHit = true;
+		const startDens = sampleCloudDensityCPU( localHit );
+		brushCarry = startDens > Math.max( 0.04, state.threshold - state.range * 0.5 ) ? 1.0 : 0.0;
 		return;
 
 	}
 
-	if ( state.mouseDelay <= 0.005 ) {
+	// "Wet brush" smoke-carry check:
+	// - Swiping in empty air carries 0 smoke -> ZERO ghost smoke generated!
+	// - Swiping through smoke charges brushCarry to 1.0, and exiting the edge smoothly
+	//   tapers brushCarry down over distance so you CAN smear/pull smoke outward!
+	let strokeIntensity = 1.0;
+	if ( state.mouseClampToSmoke ) {
 
-		applyWindStroke( lastLocalHit, localHit, localCamDir, state.mouseDepthMode );
+		const segLen = localHit.distanceTo( lastLocalHit );
+		const densHere = sampleCloudDensityCPU( localHit );
+		const smokeCutoff = Math.max( 0.04, state.threshold - state.range * 0.5 );
 
-	} else {
+		if ( densHere > smokeCutoff ) {
 
-		// Queue gust to arrive after mouseDelay seconds for a realistic wind-wave lag
-		pendingWindQueue.push( {
-			from: lastLocalHit.clone(),
-			to: localHit.clone(),
-			camDir: localCamDir.clone(),
-			mode: state.mouseDepthMode,
-			readyAt: performance.now() + state.mouseDelay * 1000
-		} );
+			brushCarry = 1.0;
+
+		} else {
+
+			brushCarry *= Math.exp( - segLen * 6.5 );
+			if ( brushCarry < 0.02 ) brushCarry = 0;
+
+		}
+
+		strokeIntensity = brushCarry;
+
+	}
+
+	if ( strokeIntensity > 0.02 ) {
+
+		if ( state.mouseDelay <= 0.005 ) {
+
+			applyWindStroke( lastLocalHit, localHit, localCamDir, state.mouseDepthMode, strokeIntensity );
+
+		} else {
+
+			// Immediate subtle stir right under cursor (25%), then build up remaining 75% over mouseDelay
+			applyWindStroke( lastLocalHit, localHit, localCamDir, state.mouseDepthMode, strokeIntensity * 0.25 );
+			activeGusts.push( {
+				from: lastLocalHit.clone(),
+				to: localHit.clone(),
+				camDir: localCamDir.clone(),
+				mode: state.mouseDepthMode,
+				intensity: strokeIntensity * 0.75,
+				elapsed: 0,
+				duration: state.mouseDelay
+			} );
+
+		}
 
 	}
 
@@ -631,7 +691,8 @@ function applyWindStroke(
 	from: THREE.Vector3,
 	to: THREE.Vector3,
 	camDir: THREE.Vector3,
-	mode: CloudState['mouseDepthMode']
+	mode: CloudState['mouseDepthMode'],
+	intensity: number
 ): void {
 
 	const stampParams = {
@@ -649,13 +710,13 @@ function applyWindStroke(
 
 			tunnelFrom.copy( from ).addScaledVector( camDir, layers[ l ] );
 			tunnelTo.copy( to ).addScaledVector( camDir, layers[ l ] );
-			interactionField.paintStroke( tunnelFrom, tunnelTo, stampParams );
+			interactionField.paintStroke( tunnelFrom, tunnelTo, stampParams, intensity );
 
 		}
 
 	} else {
 
-		interactionField.paintStroke( from, to, stampParams );
+		interactionField.paintStroke( from, to, stampParams, intensity );
 
 	}
 
@@ -711,24 +772,39 @@ function animate(): void {
 		shaderUniforms.windOffset.value.y -= dt * state.windY;
 		shaderUniforms.windOffset.value.z -= dt * state.windZ;
 
-		// Flush delayed wind gusts whose travel time has elapsed
-		if ( pendingWindQueue.length > 0 ) {
+		// Progressively build up active wind gusts over time
+		if ( activeGusts.length > 0 ) {
 
 			if ( ! state.mouseEnabled ) {
 
-				pendingWindQueue.length = 0;
+				activeGusts.length = 0;
 
 			} else {
 
-				let consumed = 0;
-				while ( consumed < pendingWindQueue.length && pendingWindQueue[ consumed ].readyAt <= now ) {
+				for ( let i = activeGusts.length - 1; i >= 0; i -- ) {
 
-					const gust = pendingWindQueue[ consumed ];
-					applyWindStroke( gust.from, gust.to, gust.camDir, gust.mode );
-					consumed ++;
+					const gust = activeGusts[ i ];
+					const prevT = gust.elapsed / gust.duration;
+					gust.elapsed = Math.min( gust.duration, gust.elapsed + dt );
+					const nextT = gust.elapsed / gust.duration;
+
+					// Smooth ease-in-out integral slice so the gust swells naturally over duration
+					const ease = ( t: number ) => t * t * ( 3 - 2 * t );
+					const slice = ease( nextT ) - ease( prevT );
+
+					if ( slice > 0.0001 ) {
+
+						applyWindStroke( gust.from, gust.to, gust.camDir, gust.mode, gust.intensity * slice * 2.2 );
+
+					}
+
+					if ( gust.elapsed >= gust.duration ) {
+
+						activeGusts.splice( i, 1 );
+
+					}
 
 				}
-				if ( consumed > 0 ) pendingWindQueue.splice( 0, consumed );
 
 			}
 

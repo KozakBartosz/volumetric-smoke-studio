@@ -72,7 +72,9 @@ export class SmokeInteractionField {
 	/**
 	 * Paints a continuous wind/wake stroke between two local-space points in [-0.5, 0.5]^3.
 	 */
-	paintStroke( from: THREE.Vector3, to: THREE.Vector3, params: StampParams ): void {
+	paintStroke( from: THREE.Vector3, to: THREE.Vector3, params: StampParams, intensity = 1.0 ): void {
+
+		if ( intensity <= 0.01 ) return;
 
 		const dx = to.x - from.x;
 		const dy = to.y - from.y;
@@ -85,7 +87,7 @@ export class SmokeInteractionField {
 		const vx = dx * invLen;
 		const vy = dy * invLen;
 		const vz = dz * invLen;
-		const speedScale = Math.min( 1.0, 0.35 + segLen * 8.0 );
+		const speedScale = Math.min( 1.0, 0.35 + segLen * 8.0 ) * intensity;
 
 		// Subdivide fast swipes so the painted trail is always seamless
 		const stepDist = Math.max( params.radius * 0.42, 0.012 );
