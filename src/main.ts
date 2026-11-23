@@ -30,6 +30,10 @@ const state: CloudState = {
 	cubeSize: 0.30,
 	cubeColor: '#2a2228',
 	cubeRotate: true,
+	cubeDisturb: true,
+	cubeWakeStrength: 0.45,
+	cubeWakeRadius: 0.0,
+	cubeMotion: 'static',
 	mouseEnabled: true,
 	mouseDepthMode: 'dome',
 	mouseDomeStrength: 0.5,
@@ -96,6 +100,18 @@ const worldHit = new THREE.Vector3();
 const localHit = new THREE.Vector3();
 const tunnelFrom = new THREE.Vector3();
 const tunnelTo = new THREE.Vector3();
+
+// Cube OBB wake tracking
+let cubeElapsed = 0;
+let hasLastCubeLocal = false;
+const cubeLocalPos = new THREE.Vector3();
+const lastCubeLocalPos = new THREE.Vector3();
+const cubeLocalVel = new THREE.Vector3();
+const cubeLocalQuat = new THREE.Quaternion();
+const cubeBoxMat4 = new THREE.Matrix4();
+const cubeBoxMat3 = new THREE.Matrix3();
+const invCubeBoxMat3 = new THREE.Matrix3();
+const cubeOmega = new THREE.Vector3();
 
 function updateSkyGradient(): void {
 
@@ -392,9 +408,22 @@ function buildGUI(): void {
 	mouseFolder.add( state, 'mouseDelay', 0, 1.0, 0.01 ).name( 'Wind Buildup (s)' );
 	mouseFolder.add( state, 'mouseRecovery', 0.06, 1.5, 0.02 ).name( 'Fade Speed' );
 
-	// Test Cube (for checking volumetric wrapping around 3D models)
+	// Test Cube (for checking volumetric wrapping & disturbance around 3D models)
 	const cubeFolder = gui.addFolder( 'Test Cube' );
 	cubeFolder.add( state, 'showCube' ).name( 'Show Cube' ).onChange( updateTestCube );
+	cubeFolder.add( state, 'cubeDisturb' ).name( 'Disturb Smoke' );
+	cubeFolder.add( state, 'cubeWakeStrength', 0, 1.5, 0.02 ).name( 'Cube Wake Strength' );
+	cubeFolder.add( state, 'cubeWakeRadius', - 0.025, 0.025, 0.001 ).name( 'Cube Wake Spread' );
+	cubeFolder.add( state, 'cubeMotion', {
+		'Static': 'static',
+		'Gentle Float': 'float',
+		'Orbit Through': 'orbit'
+	} ).name( 'Cube Motion' ).onChange( () => {
+
+		hasLastCubeLocal = false;
+		if ( state.cubeMotion === 'static' ) updateTestCube();
+
+	} );
 	cubeFolder.add( state, 'cubeX', - 0.8, 0.8, 0.01 ).name( 'Position X' ).onChange( updateTestCube );
 	cubeFolder.add( state, 'cubeY', - 0.8, 0.8, 0.01 ).name( 'Position Y' ).onChange( updateTestCube );
 	cubeFolder.add( state, 'cubeZ', - 0.8, 0.8, 0.01 ).name( 'Position Z' ).onChange( updateTestCube );
@@ -752,11 +781,92 @@ function animate(): void {
 	// Rotate cloud mesh
 	cloudMesh.rotation.y -= dt * state.rotationSpeed;
 
-	// Gently spin test cube
-	if ( testCube && state.cubeRotate ) {
+	// Gently spin & optionally animate test cube
+	if ( testCube && state.showCube ) {
 
-		testCube.rotation.y += dt * 0.35;
-		testCube.rotation.x += dt * 0.18;
+		if ( state.cubeRotate ) {
+
+			testCube.rotation.y += dt * 0.35;
+			testCube.rotation.x += dt * 0.18;
+
+		}
+
+		cubeElapsed += dt;
+
+		if ( state.cubeMotion === 'float' ) {
+
+			testCube.position.set(
+				state.cubeX + Math.sin( cubeElapsed * 0.9 ) * 0.12,
+				state.cubeY + Math.cos( cubeElapsed * 1.15 ) * 0.10,
+				state.cubeZ + Math.sin( cubeElapsed * 0.7 ) * 0.08
+			);
+
+		} else if ( state.cubeMotion === 'orbit' ) {
+
+			const orbitR = state.volumeScale * 0.30;
+			testCube.position.set(
+				Math.cos( cubeElapsed * 0.85 ) * orbitR,
+				state.cubeY + Math.sin( cubeElapsed * 1.4 ) * orbitR * 0.35,
+				Math.sin( cubeElapsed * 0.85 ) * orbitR
+			);
+
+		}
+
+		// Let the cube stir & part the smoke using its EXACT oriented box shape + 8 rotating corners
+		if ( state.cubeDisturb && state.cubeWakeStrength > 0.001 ) {
+
+			cubeLocalPos.copy( testCube.position );
+			cloudMesh.worldToLocal( cubeLocalPos );
+
+			if ( hasLastCubeLocal && dt > 0.0001 ) {
+
+				cubeLocalVel.copy( cubeLocalPos ).sub( lastCubeLocalPos ).divideScalar( dt );
+
+			} else {
+
+				cubeLocalVel.set( 0, 0, 0 );
+				hasLastCubeLocal = true;
+
+			}
+
+			lastCubeLocalPos.copy( cubeLocalPos );
+
+			// Cube orientation & angular velocity in cloudMesh local space
+			invQuat.copy( cloudMesh.quaternion ).invert();
+			cubeLocalQuat.copy( invQuat ).multiply( testCube.quaternion );
+			cubeBoxMat4.makeRotationFromQuaternion( cubeLocalQuat );
+			cubeBoxMat3.setFromMatrix4( cubeBoxMat4 );
+			invCubeBoxMat3.copy( cubeBoxMat3 ).transpose(); // orthonormal inverse = transpose!
+
+			// Angular velocity vector in cloud local space (cube spin + relative cloud spin)
+			cubeOmega.set(
+				state.cubeRotate ? 1.4 : 0.0,
+				( state.cubeRotate ? 2.6 : 0.0 ) + state.rotationSpeed * 2.5,
+				0.0
+			).applyQuaternion( invQuat );
+
+			const halfExtent = ( state.cubeSize * 0.5 ) / Math.max( state.volumeScale, 0.25 );
+			interactionField.stampOrientedBox(
+				cubeLocalPos,
+				invCubeBoxMat3,
+				cubeBoxMat3,
+				halfExtent,
+				state.cubeWakeRadius,
+				cubeLocalVel,
+				cubeOmega,
+				state.cubeWakeStrength,
+				dt
+			);
+
+		} else {
+
+			hasLastCubeLocal = false;
+
+		}
+
+	} else {
+
+		hasLastCubeLocal = false;
 
 	}
 
@@ -812,7 +922,8 @@ function animate(): void {
 
 		// Relax & upload 32^3 painted 3D wake field only when active
 		interactionField.update( dt, state.mouseRecovery );
-		shaderUniforms.mouseActive.value = state.mouseEnabled && interactionField.isActive ? interactionField.activityLevel : 0;
+		const wakeEnabled = state.mouseEnabled || ( state.showCube && state.cubeDisturb );
+		shaderUniforms.mouseActive.value = wakeEnabled && interactionField.isActive ? interactionField.activityLevel : 0;
 
 	}
 

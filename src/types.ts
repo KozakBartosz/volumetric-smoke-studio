@@ -1,4 +1,5 @@
 export type MouseDepthMode = 'dome' | 'plane' | 'tunnel';
+export type CubeMotionMode = 'static' | 'float' | 'orbit';
 
 export interface CloudPreset {
 	// Optional performance, cube & mouse overrides
@@ -11,6 +12,10 @@ export interface CloudPreset {
 	cubeSize?: number;
 	cubeColor?: string;
 	cubeRotate?: boolean;
+	cubeDisturb?: boolean;
+	cubeWakeStrength?: number;
+	cubeWakeRadius?: number;
+	cubeMotion?: CubeMotionMode;
 	mouseEnabled?: boolean;
 	mouseDepthMode?: MouseDepthMode;
 	mouseDomeStrength?: number;
@@ -94,6 +99,10 @@ export interface CloudState extends CloudPreset {
 	cubeSize: number;
 	cubeColor: string;
 	cubeRotate: boolean;
+	cubeDisturb: boolean;
+	cubeWakeStrength: number;
+	cubeWakeRadius: number;
+	cubeMotion: CubeMotionMode;
 	mouseEnabled: boolean;
 	mouseDepthMode: MouseDepthMode;
 	mouseDomeStrength: number;
