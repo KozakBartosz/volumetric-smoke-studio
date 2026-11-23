@@ -10,7 +10,11 @@ import {
 	createDetailVolumeTexture,
 	generateCloudVolumeData
 } from './noise';
-import { createVolumetricCloudMaterial, type CloudShaderUniforms } from './cloudShader';
+import {
+	createVolumetricCloudMaterial,
+	type CloudShaderUniforms
+} from './cloudShader';
+import { SmokeInteractionField } from './interactionField';
 
 const DEFAULT_PRESET_NAME = 'Dark Amaranth (Dense Smoke)';
 
@@ -26,6 +30,19 @@ const state: CloudState = {
 	cubeSize: 0.30,
 	cubeColor: '#2a2228',
 	cubeRotate: true,
+	mouseEnabled: true,
+	mouseDepthMode: 'dome',
+	mouseDomeStrength: 0.5,
+	mouseDepthOffset: 0.0,
+	mouseClampToSmoke: true,
+	mouseRadius: 0.035,
+	mousePush: 0.52,
+	mouseDrag: 0.89,
+	mouseSwirl: 1.0,
+	mouseTurbulence: 0.15,
+	mouseDisperse: 0.8,
+	mouseDelay: 0.05,
+	mouseRecovery: 0.52,
 	...PRESETS[ DEFAULT_PRESET_NAME ]
 };
 
@@ -53,6 +70,29 @@ const clock = new THREE.Clock();
 const worldLightDir = new THREE.Vector3();
 const localLightDir = new THREE.Vector3();
 const invQuat = new THREE.Quaternion();
+
+// 32x32x32 3D painted fluid wake field + delayed wind gust queue
+const interactionField = new SmokeInteractionField( 32 );
+interface DelayedWindSample {
+	from: THREE.Vector3;
+	to: THREE.Vector3;
+	camDir: THREE.Vector3;
+	mode: CloudState['mouseDepthMode'];
+	readyAt: number;
+}
+const pendingWindQueue: DelayedWindSample[] = [];
+let isPointerDown = false;
+let hasLastHit = false;
+const lastLocalHit = new THREE.Vector3();
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const hitPlane = new THREE.Plane();
+const planeNormal = new THREE.Vector3();
+const localCamDir = new THREE.Vector3();
+const worldHit = new THREE.Vector3();
+const localHit = new THREE.Vector3();
+const tunnelFrom = new THREE.Vector3();
+const tunnelTo = new THREE.Vector3();
 
 function updateSkyGradient(): void {
 
@@ -155,6 +195,9 @@ function syncUniformsFromState(): void {
 	shaderUniforms.detailStrength.value = state.detailStrength;
 	shaderUniforms.warpStrength.value = state.warpStrength;
 	shaderUniforms.warpScale.value = state.warpScale;
+	shaderUniforms.mouseDisperse.value = state.mouseDisperse;
+	shaderUniforms.mouseTurbulence.value = state.mouseTurbulence;
+	shaderUniforms.mouseClampToSmoke.value = state.mouseClampToSmoke ? 1.0 : 0.0;
 
 	if ( cloudMesh ) {
 
@@ -319,6 +362,34 @@ function buildGUI(): void {
 		}
 	}, 'randomize' ).name( 'Randomize Volume' );
 
+	// Mouse Fluid Interaction (32^3 painted 3D wake field)
+	const mouseFolder = gui.addFolder( 'Mouse Interaction' );
+	mouseFolder.add( state, 'mouseEnabled' ).name( 'Enable Hover Wake' ).onChange( ( enabled: boolean ) => {
+
+		if ( ! enabled ) interactionField.clear();
+
+	} );
+	mouseFolder.add( state, 'mouseDepthMode', {
+		'Front Surface (Dome)': 'dome',
+		'Flat Plane (Custom Depth)': 'plane',
+		'Full Tunnel (Through)': 'tunnel'
+	} ).name( 'Depth Mode' ).onChange( () => {
+
+		hasLastHit = false;
+
+	} );
+	mouseFolder.add( state, 'mouseDomeStrength', 0, 1.0, 0.05 ).name( 'Dome Curve (0=Mid)' );
+	mouseFolder.add( state, 'mouseDepthOffset', - 0.45, 0.45, 0.01 ).name( 'Depth Offset (Z)' );
+	mouseFolder.add( state, 'mouseClampToSmoke' ).name( 'No Ghost Smoke' ).onChange( syncUniformsFromState );
+	mouseFolder.add( state, 'mouseRadius', 0.02, 0.25, 0.005 ).name( 'Brush Radius' );
+	mouseFolder.add( state, 'mousePush', 0, 0.6, 0.01 ).name( 'Outward Scatter' );
+	mouseFolder.add( state, 'mouseDrag', 0, 0.9, 0.01 ).name( 'Swipe Flow' );
+	mouseFolder.add( state, 'mouseDisperse', 0, 1.0, 0.02 ).name( 'Center Disperse' ).onChange( syncUniformsFromState );
+	mouseFolder.add( state, 'mouseSwirl', 0, 1.8, 0.02 ).name( 'Vortex Swirl' );
+	mouseFolder.add( state, 'mouseTurbulence', 0, 0.65, 0.01 ).name( 'Wake Turbulence' ).onChange( syncUniformsFromState );
+	mouseFolder.add( state, 'mouseDelay', 0, 0.5, 0.01 ).name( 'Wind Delay (s)' );
+	mouseFolder.add( state, 'mouseRecovery', 0.06, 1.5, 0.02 ).name( 'Fade Speed' );
+
 	// Test Cube (for checking volumetric wrapping around 3D models)
 	const cubeFolder = gui.addFolder( 'Test Cube' );
 	cubeFolder.add( state, 'showCube' ).name( 'Show Cube' ).onChange( updateTestCube );
@@ -330,8 +401,9 @@ function buildGUI(): void {
 	cubeFolder.add( state, 'cubeRotate' ).name( 'Auto Rotate' );
 
 	presetFolder.open();
+	mouseFolder.open();
 	perfFolder.open();
-	cubeFolder.open();
+	cubeFolder.close();
 	colorFolder.close();
 	lightFolder.close();
 	densityFolder.close();
@@ -438,7 +510,12 @@ async function init(): Promise<void> {
 	detailTexture = createDetailVolumeTexture( 64 );
 
 	// Volumetric smoke material & mesh
-	const { material, uniforms } = createVolumetricCloudMaterial( cloudTexture, detailTexture, state );
+	const { material, uniforms } = createVolumetricCloudMaterial(
+		cloudTexture,
+		detailTexture,
+		interactionField.texture,
+		state
+	);
 	shaderUniforms = uniforms;
 
 	cloudMesh = new THREE.Mesh( new THREE.BoxGeometry( 1, 1, 1 ), material );
@@ -448,7 +525,139 @@ async function init(): Promise<void> {
 	buildGUI();
 
 	window.addEventListener( 'resize', onWindowResize );
+	renderer.domElement.addEventListener( 'pointerdown', () => {
+
+		isPointerDown = true;
+		hasLastHit = false;
+
+	} );
+	window.addEventListener( 'pointerup', () => {
+
+		isPointerDown = false;
+		hasLastHit = false;
+
+	} );
+	renderer.domElement.addEventListener( 'pointerleave', () => {
+
+		hasLastHit = false;
+
+	} );
+	renderer.domElement.addEventListener( 'pointermove', onPointerMove );
+
 	renderer.setAnimationLoop( animate );
+
+}
+
+function onPointerMove( event: PointerEvent ): void {
+
+	if ( ! state.mouseEnabled || isPointerDown || ! cloudMesh || ! camera ) return;
+
+	pointerNdc.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+	pointerNdc.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+
+	// Intersect pointer ray with a camera-facing plane through the cloud center
+	planeNormal.copy( camera.position ).sub( cloudMesh.position ).normalize();
+	hitPlane.setFromNormalAndCoplanarPoint( planeNormal, cloudMesh.position );
+	raycaster.setFromCamera( pointerNdc, camera );
+
+	if ( ! raycaster.ray.intersectPlane( hitPlane, worldHit ) ) return;
+
+	localHit.copy( worldHit );
+	cloudMesh.worldToLocal( localHit );
+
+	// Only disturb smoke when hovering near/inside the cubic volume
+	if ( Math.abs( localHit.x ) > 0.72 || Math.abs( localHit.y ) > 0.72 || Math.abs( localHit.z ) > 0.72 ) {
+
+		hasLastHit = false;
+		return;
+
+	}
+
+	// Camera-facing direction in cloudMesh local space (from center toward camera)
+	invQuat.copy( cloudMesh.quaternion ).invert();
+	localCamDir.copy( planeNormal ).applyQuaternion( invQuat ).normalize();
+
+	// Apply selected depth surface:
+	// - 'dome': front hemisphere (front surface near center, smoothly curving to mid-plane at edges)
+	// - 'plane': flat camera-facing plane shifted by mouseDepthOffset
+	// - 'tunnel': stamps at multiple depths through the cloud along the camera ray
+	if ( state.mouseDepthMode === 'dome' ) {
+
+		const domeR = 0.34;
+		const r2 = localHit.lengthSq();
+		const domeZ = ( r2 < domeR * domeR ? Math.sqrt( domeR * domeR - r2 ) : 0 ) * state.mouseDomeStrength;
+		localHit.addScaledVector( localCamDir, domeZ + state.mouseDepthOffset );
+
+	} else if ( state.mouseDepthMode === 'plane' ) {
+
+		localHit.addScaledVector( localCamDir, state.mouseDepthOffset );
+
+	} else {
+
+		localHit.addScaledVector( localCamDir, state.mouseDepthOffset );
+
+	}
+
+	if ( ! hasLastHit ) {
+
+		lastLocalHit.copy( localHit );
+		hasLastHit = true;
+		return;
+
+	}
+
+	if ( state.mouseDelay <= 0.005 ) {
+
+		applyWindStroke( lastLocalHit, localHit, localCamDir, state.mouseDepthMode );
+
+	} else {
+
+		// Queue gust to arrive after mouseDelay seconds for a realistic wind-wave lag
+		pendingWindQueue.push( {
+			from: lastLocalHit.clone(),
+			to: localHit.clone(),
+			camDir: localCamDir.clone(),
+			mode: state.mouseDepthMode,
+			readyAt: performance.now() + state.mouseDelay * 1000
+		} );
+
+	}
+
+	lastLocalHit.copy( localHit );
+
+}
+
+function applyWindStroke(
+	from: THREE.Vector3,
+	to: THREE.Vector3,
+	camDir: THREE.Vector3,
+	mode: CloudState['mouseDepthMode']
+): void {
+
+	const stampParams = {
+		radius: state.mouseRadius,
+		push: state.mousePush,
+		drag: state.mouseDrag,
+		swirl: state.mouseSwirl,
+		disperse: state.mouseDisperse
+	};
+
+	if ( mode === 'tunnel' ) {
+
+		const layers = [ - 0.24, 0.0, 0.24 ];
+		for ( let l = 0; l < layers.length; l ++ ) {
+
+			tunnelFrom.copy( from ).addScaledVector( camDir, layers[ l ] );
+			tunnelTo.copy( to ).addScaledVector( camDir, layers[ l ] );
+			interactionField.paintStroke( tunnelFrom, tunnelTo, stampParams );
+
+		}
+
+	} else {
+
+		interactionField.paintStroke( from, to, stampParams );
+
+	}
 
 }
 
@@ -501,6 +710,33 @@ function animate(): void {
 		shaderUniforms.windOffset.value.x -= dt * state.windX;
 		shaderUniforms.windOffset.value.y -= dt * state.windY;
 		shaderUniforms.windOffset.value.z -= dt * state.windZ;
+
+		// Flush delayed wind gusts whose travel time has elapsed
+		if ( pendingWindQueue.length > 0 ) {
+
+			if ( ! state.mouseEnabled ) {
+
+				pendingWindQueue.length = 0;
+
+			} else {
+
+				let consumed = 0;
+				while ( consumed < pendingWindQueue.length && pendingWindQueue[ consumed ].readyAt <= now ) {
+
+					const gust = pendingWindQueue[ consumed ];
+					applyWindStroke( gust.from, gust.to, gust.camDir, gust.mode );
+					consumed ++;
+
+				}
+				if ( consumed > 0 ) pendingWindQueue.splice( 0, consumed );
+
+			}
+
+		}
+
+		// Relax & upload 32^3 painted 3D wake field only when active
+		interactionField.update( dt, state.mouseRecovery );
+		shaderUniforms.mouseActive.value = state.mouseEnabled && interactionField.isActive ? interactionField.activityLevel : 0;
 
 	}
 

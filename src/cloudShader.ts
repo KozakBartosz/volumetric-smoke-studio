@@ -56,6 +56,7 @@ const hitBox = /*@__PURE__*/ Fn( ( { orig, dir }: { orig: any; dir: any } ) => {
 export function createVolumetricCloudMaterial(
 	baseTexture: THREE.Data3DTexture,
 	detailTexture: THREE.Data3DTexture,
+	interactionTexture: THREE.Data3DTexture,
 	initialParams: CloudState
 ) {
 
@@ -97,11 +98,18 @@ export function createVolumetricCloudMaterial(
 		detailStrength: uniform( initialParams.detailStrength ),
 		warpStrength: uniform( initialParams.warpStrength ),
 		warpScale: uniform( initialParams.warpScale ),
-		windOffset: uniform( new THREE.Vector3( 0, 0, 0 ) )
+		windOffset: uniform( new THREE.Vector3( 0, 0, 0 ) ),
+
+		// Painted 3D Fluid Wake Field (O(1) single texture fetch per active step)
+		mouseActive: uniform( 0.0 ),
+		mouseDisperse: uniform( initialParams.mouseDisperse ),
+		mouseTurbulence: uniform( initialParams.mouseTurbulence ),
+		mouseClampToSmoke: uniform( initialParams.mouseClampToSmoke ? 1.0 : 0.0 )
 	};
 
 	const baseTexNode = texture3D( baseTexture, null, 0 );
 	const detailTexNode = texture3D( detailTexture, null, 0 );
+	const interactionTexNode = texture3D( interactionTexture, null, 0 );
 
 	// Henyey-Greenstein phase function (computed once per pixel)
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,21 +173,53 @@ export function createVolumetricCloudMaterial(
 			// Clamp last step length right up to the opaque surface for silky-smooth intersections
 			const localStep = min( stepSize, max( tEnd.sub( tCur ), 0.0 ) );
 
-			const uvw = positionRay.add( 0.5 );
+			const baseUvw = positionRay.add( 0.5 );
+			const advectedUvw = vec3( baseUvw ).toVar();
+			const centerDisperse = float( 0.0 ).toVar();
+			const wakeEnergy = float( 0.0 ).toVar();
+			const origMask = float( 1.0 ).toVar();
 
-			// Fast coarse empty-space check (1 fetch in empty air)
-			const coarseVal = float( baseTexNode.sample( uvw ).r );
+			// O(1) painted 3D wind/wake field lookup (skipped completely when idle!)
+			If( uniforms.mouseActive.greaterThan( 0.001 ), () => {
 
-			If( coarseVal.greaterThan( emptyCutoff ), () => {
+				// Optional mask prevents pulling ghost smoke into empty air outside the cloud
+				If( uniforms.mouseClampToSmoke.greaterThan( 0.5 ), () => {
+
+					const origVal = float( baseTexNode.sample( baseUvw ).r );
+					origMask.assign( smoothstep( edgeLow.sub( 0.06 ), edgeLow.add( 0.05 ), origVal ) );
+
+				} );
+
+				If( origMask.greaterThan( 0.001 ), () => {
+
+					const fieldSample = interactionTexNode.sample( baseUvw );
+					const rawDisp = fieldSample.rgb.sub( 0.5 ).mul( 2.0 );
+					const disp = rawDisp.mul( 0.36 ).mul( origMask );
+					advectedUvw.subAssign( disp );
+					centerDisperse.assign( fieldSample.a.mul( uniforms.mouseDisperse ) );
+					wakeEnergy.assign( clamp( max( length( rawDisp ), fieldSample.a ), 0.0, 1.0 ).mul( origMask ) );
+
+				} );
+
+			} );
+
+			// Fast coarse empty-space check on advected coordinates (1 fetch in empty air)
+			const coarseVal = float( baseTexNode.sample( advectedUvw ).r );
+
+			If( coarseVal.greaterThan( emptyCutoff ).and( origMask.greaterThan( 0.001 ) ), () => {
 
 				// Single packed RGBA fetch: RGB = 3D warp vector, A = detail erosion
-				const detailSample = detailTexNode.sample( uvw.mul( uniforms.detailScale ).add( uniforms.windOffset ) );
-				const warpVec = detailSample.rgb.sub( 0.5 ).mul( uniforms.warpStrength );
-				const warpedUvw = uvw.add( warpVec );
+				// Locally boosts swirling turbulence right around the cursor wake (0 extra fetches!)
+				const detailSample = detailTexNode.sample( advectedUvw.mul( uniforms.detailScale ).add( uniforms.windOffset ) );
+				const localWarp = uniforms.warpStrength.add( wakeEnergy.mul( uniforms.mouseTurbulence ) );
+				const warpVec = detailSample.rgb.sub( 0.5 ).mul( localWarp );
+				const warpedUvw = advectedUvw.add( warpVec );
 
 				const baseVal = float( baseTexNode.sample( warpedUvw ).r );
-				const eroded = baseVal.sub( detailSample.a.oneMinus().mul( uniforms.detailStrength ).mul( 0.48 ) );
-				const density = smoothstep( edgeLow, edgeHigh, eroded ).mul( uniforms.opacity ).toVar();
+				const eroded = baseVal
+					.sub( detailSample.a.oneMinus().mul( uniforms.detailStrength ).mul( 0.48 ) )
+					.sub( centerDisperse.mul( 0.38 ) );
+				const density = smoothstep( edgeLow, edgeHigh, eroded ).mul( uniforms.opacity ).mul( origMask ).toVar();
 
 				If( density.greaterThan( 0.002 ), () => {
 

@@ -67,6 +67,8 @@ export interface CloudPreset {
 	seed: number;
 }
 
+export type MouseDepthMode = 'dome' | 'plane' | 'tunnel';
+
 export interface CloudState extends CloudPreset {
 	preset: string;
 	showLightHelper: boolean;
@@ -79,6 +81,19 @@ export interface CloudState extends CloudPreset {
 	cubeSize: number;
 	cubeColor: string;
 	cubeRotate: boolean;
+	mouseEnabled: boolean;
+	mouseDepthMode: MouseDepthMode;
+	mouseDomeStrength: number;
+	mouseDepthOffset: number;
+	mouseClampToSmoke: boolean;
+	mouseRadius: number;
+	mousePush: number;
+	mouseDrag: number;
+	mouseSwirl: number;
+	mouseTurbulence: number;
+	mouseDisperse: number;
+	mouseDelay: number;
+	mouseRecovery: number;
 }
 
 export interface CloudVolumeOptions {
