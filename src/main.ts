@@ -1,5 +1,7 @@
 import './style.css';
 import * as THREE from 'three/webgpu';
+import { pass, uniform, vec4 } from 'three/tsl';
+import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import GUI from 'lil-gui';
 
@@ -23,6 +25,7 @@ const state: CloudState = {
 	showLightHelper: false,
 	renderScale: 1.0,
 	jitter: 1.0,
+	smokeBlur: 0.35,
 	showCube: true,
 	cubeX: 0.10,
 	cubeY: - 0.02,
@@ -51,7 +54,11 @@ const state: CloudState = {
 };
 
 let renderer: THREE.WebGPURenderer;
+let blurPipeline: THREE.RenderPipeline | undefined;
+let sharpPipeline: THREE.RenderPipeline | undefined;
+const blurAmountUniform = uniform( new THREE.Vector2( state.smokeBlur, state.smokeBlur ) );
 let scene: THREE.Scene;
+let smokeScene: THREE.Scene;
 let camera: THREE.PerspectiveCamera;
 let controls: OrbitControls;
 let cloudMesh: THREE.Mesh;
@@ -217,6 +224,12 @@ function syncUniformsFromState(): void {
 	shaderUniforms.mouseDisperse.value = state.mouseDisperse;
 	shaderUniforms.mouseTurbulence.value = state.mouseTurbulence;
 
+	if ( blurAmountUniform ) {
+
+		blurAmountUniform.value.set( state.smokeBlur, state.smokeBlur );
+
+	}
+
 	if ( cloudMesh ) {
 
 		cloudMesh.scale.setScalar( state.volumeScale );
@@ -342,8 +355,9 @@ function buildGUI(): void {
 		renderer.setSize( window.innerWidth, window.innerHeight );
 
 	} );
-	perfFolder.add( state, 'steps', 24, 160, 1 ).name( 'Raymarch Steps' ).onChange( syncUniformsFromState );
+	perfFolder.add( state, 'steps', 20, 160, 1 ).name( 'Raymarch Steps' ).onChange( syncUniformsFromState );
 	perfFolder.add( state, 'jitter', 0, 1, 0.05 ).name( 'Ray Jitter (IGN)' ).onChange( syncUniformsFromState );
+	perfFolder.add( state, 'smokeBlur', 0, 1.5, 0.05 ).name( 'Smoke Blur' ).onChange( syncUniformsFromState );
 
 	// Background
 	const bgFolder = gui.addFolder( 'Background Gradient' );
@@ -449,6 +463,7 @@ async function init(): Promise<void> {
 	renderer = new THREE.WebGPURenderer( { antialias: false } );
 	renderer.setPixelRatio( state.renderScale );
 	renderer.setSize( window.innerWidth, window.innerHeight );
+	renderer.setClearColor( 0x000000, 0 );
 	document.body.appendChild( renderer.domElement );
 
 	await renderer.init();
@@ -464,6 +479,7 @@ async function init(): Promise<void> {
 	fpsBadge = document.getElementById( 'fps-badge' );
 
 	scene = new THREE.Scene();
+	smokeScene = new THREE.Scene();
 
 	camera = new THREE.PerspectiveCamera( 55, window.innerWidth / window.innerHeight, 0.1, 100 );
 	camera.position.set( 0, 0.14, 2.2 );
@@ -544,17 +560,43 @@ async function init(): Promise<void> {
 	} );
 	detailTexture = createDetailVolumeTexture( 64 );
 
-	// Volumetric smoke material & mesh
+	// Pass 1: crisp opaque scene (sky + test cube + light helper) at full resolution
+	const basePass = pass( scene, camera );
+	const baseColor = basePass.getTextureNode( 'output' );
+	const baseDepth = basePass.getTextureNode( 'depth' );
+
+	// Volumetric smoke material & mesh in its own isolated pass (reads opaque depth from Pass 1!)
 	const { material, uniforms } = createVolumetricCloudMaterial(
 		cloudTexture,
 		detailTexture,
 		interactionField.texture,
-		state
+		state,
+		baseDepth
 	);
 	shaderUniforms = uniforms;
 
 	cloudMesh = new THREE.Mesh( new THREE.BoxGeometry( 1, 1, 1 ), material );
-	scene.add( cloudMesh );
+	smokeScene.add( cloudMesh );
+
+	// Pass 2: smoke-only transparent pass -> blur ONLY the smoke, keep cube razor-sharp!
+	const smokePass = pass( smokeScene, camera );
+	const smokeColor = smokePass.getTextureNode( 'output' );
+
+	blurAmountUniform.value.set( state.smokeBlur, state.smokeBlur );
+	const blurredSmoke = gaussianBlur( smokeColor, blurAmountUniform, 2, { resolutionScale: 0.75 } );
+
+	// Premultiplied alpha composite over crisp opaque baseColor
+	const compositedBlurred = vec4(
+		blurredSmoke.rgb.add( baseColor.rgb.mul( blurredSmoke.a.oneMinus() ) ),
+		1.0
+	);
+	const compositedSharp = vec4(
+		smokeColor.rgb.add( baseColor.rgb.mul( smokeColor.a.oneMinus() ) ),
+		1.0
+	);
+
+	blurPipeline = new THREE.RenderPipeline( renderer, compositedBlurred );
+	sharpPipeline = new THREE.RenderPipeline( renderer, compositedSharp );
 
 	syncUniformsFromState();
 	buildGUI();
@@ -927,7 +969,15 @@ function animate(): void {
 
 	}
 
-	renderer.render( scene, camera );
+	if ( state.smokeBlur > 0.001 && blurPipeline ) {
+
+		blurPipeline.render();
+
+	} else if ( sharpPipeline ) {
+
+		sharpPipeline.render();
+
+	}
 
 }
 

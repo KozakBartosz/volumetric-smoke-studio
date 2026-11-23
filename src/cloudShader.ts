@@ -22,6 +22,7 @@ import {
 	positionView,
 	pow,
 	screenCoordinate,
+	screenUV,
 	smoothstep,
 	texture3D,
 	uniform,
@@ -57,7 +58,9 @@ export function createVolumetricCloudMaterial(
 	baseTexture: THREE.Data3DTexture,
 	detailTexture: THREE.Data3DTexture,
 	interactionTexture: THREE.Data3DTexture,
-	initialParams: CloudState
+	initialParams: CloudState,
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	sceneDepthNode?: any
 ) {
 
 	const uniforms = {
@@ -130,8 +133,8 @@ export function createVolumetricCloudMaterial(
 		bounds.x.greaterThan( bounds.y ).discard();
 		bounds.assign( vec2( max( bounds.x, 0.0 ), bounds.y ) );
 
-		// Depth-aware raymarching: stop the ray at opaque scene geometry
-		const sceneDepth = viewportDepthTexture();
+		// Depth-aware raymarching: stop the ray at opaque scene geometry (e.g. crisp cube pass)
+		const sceneDepth = sceneDepthNode ? sceneDepthNode.sample( screenUV ).r : viewportDepthTexture();
 		const sceneViewZ = perspectiveDepthToViewZ( sceneDepth, cameraNear, cameraFar );
 		const tScene = length( vDirection ).mul( sceneViewZ.div( positionView.z ) );
 		const tEnd = min( bounds.y, tScene ).toVar();

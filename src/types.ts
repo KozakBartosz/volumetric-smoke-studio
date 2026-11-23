@@ -5,6 +5,7 @@ export interface CloudPreset {
 	// Optional performance, cube & mouse overrides
 	renderScale?: number;
 	jitter?: number;
+	smokeBlur?: number;
 	showCube?: boolean;
 	cubeX?: number;
 	cubeY?: number;
@@ -92,6 +93,7 @@ export interface CloudState extends CloudPreset {
 	showLightHelper: boolean;
 	renderScale: number;
 	jitter: number;
+	smokeBlur: number;
 	showCube: boolean;
 	cubeX: number;
 	cubeY: number;

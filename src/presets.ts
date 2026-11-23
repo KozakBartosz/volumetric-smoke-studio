@@ -4,6 +4,7 @@ export const PRESETS: Record<string, CloudPreset> = {
 	'Dark Amaranth v3 (Custom)': {
 		renderScale: 1.3,
 		jitter: 1,
+		smokeBlur: 0.35,
 		showCube: true,
 		cubeX: 0.27,
 		cubeY: - 0.02,
@@ -51,7 +52,7 @@ export const PRESETS: Record<string, CloudPreset> = {
 		range: 0.17,
 		opacity: 1.04,
 		absorption: 1.35,
-		steps: 68,
+		steps: 44,
 		exposure: 1.12,
 		contrast: 1.15,
 
@@ -80,6 +81,7 @@ export const PRESETS: Record<string, CloudPreset> = {
 	'Dark Amaranth v3 Big (Custom)': {
 		renderScale: 1.3,
 		jitter: 1,
+		smokeBlur: 0.35,
 		showCube: true,
 		cubeX: 0.27,
 		cubeY: - 0.02,
@@ -131,7 +133,7 @@ export const PRESETS: Record<string, CloudPreset> = {
 		range: 0.17,
 		opacity: 1.04,
 		absorption: 5,
-		steps: 68,
+		steps: 44,
 		exposure: 1.12,
 		contrast: 1.15,
 
