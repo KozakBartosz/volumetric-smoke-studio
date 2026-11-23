@@ -16,7 +16,7 @@ import {
 } from './cloudShader';
 import { SmokeInteractionField } from './interactionField';
 
-const DEFAULT_PRESET_NAME = 'Dark Amaranth (Dense Smoke)';
+const DEFAULT_PRESET_NAME = 'Dark Amaranth v2 (Custom)';
 
 const state: CloudState = {
 	preset: DEFAULT_PRESET_NAME,

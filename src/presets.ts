@@ -1,64 +1,6 @@
 import type { CloudPreset } from './types';
 
 export const PRESETS: Record<string, CloudPreset> = {
-	'Dark Amaranth (Dense Smoke)': {
-		// Colors
-		shadowColor: '#0c0106',
-		midColor: '#78082b',
-		highlightColor: '#e61955',
-		rimColor: '#ff2e6d',
-		coreGlowColor: '#b3003b',
-		ambientColor: '#1f0511',
-
-		// Lighting & Shadows
-		lightColor: '#ffd4e0',
-		lightIntensity: 1.55,
-		lightAzimuth: 38,
-		lightElevation: 44,
-		ambientIntensity: 0.16,
-		shadowAbsorption: 3.4,
-		shadowDistance: 0.42,
-		shadowContrast: 1.45,
-		reliefStrength: 3.2,
-		powderStrength: 1.8,
-		rimIntensity: 0.65,
-		anisotropy: 0.58,
-		coreGlowIntensity: 0.22,
-
-		// Density & Shape
-		threshold: 0.16,
-		range: 0.12,
-		opacity: 0.72,
-		absorption: 2.1,
-		steps: 56,
-		exposure: 1.12,
-		contrast: 1.15,
-
-		// Detail & Motion
-		detailScale: 2.3,
-		detailStrength: 0.46,
-		warpStrength: 0.14,
-		warpScale: 1.4,
-		windX: 0.035,
-		windY: 0.055,
-		windZ: 0.015,
-		rotationSpeed: 0.08,
-		volumeScale: 1.55,
-
-		// Background
-		bgTop: '#060104',
-		bgMid: '#12030a',
-		bgBottom: '#210612',
-
-		// Volume generator
-		noiseScale: 0.055,
-		noiseOctaves: 4,
-		noiseTurbulence: 0.48,
-		tendrils: 0.72,
-		falloffPower: 1.55,
-		seed: 13.7
-	},
-
 	'Dark Amaranth v2 (Custom)': {
 		renderScale: 1.3,
 		jitter: 1,
@@ -119,6 +61,64 @@ export const PRESETS: Record<string, CloudPreset> = {
 		tendrils: 0.6,
 		falloffPower: 1.55,
 		seed: 38.5
+	},
+
+	'Dark Amaranth (Dense Smoke)': {
+		// Colors
+		shadowColor: '#14020a',
+		midColor: '#960e39',
+		highlightColor: '#ff2e6d',
+		rimColor: '#ff4f85',
+		coreGlowColor: '#cc0044',
+		ambientColor: '#2e0819',
+
+		// Lighting & Shadows
+		lightColor: '#ffe0ea',
+		lightIntensity: 2.1,
+		lightAzimuth: 38,
+		lightElevation: 44,
+		ambientIntensity: 0.24,
+		shadowAbsorption: 2.8,
+		shadowDistance: 0.42,
+		shadowContrast: 1.32,
+		reliefStrength: 3.2,
+		powderStrength: 1.5,
+		rimIntensity: 0.72,
+		anisotropy: 0.58,
+		coreGlowIntensity: 0.26,
+
+		// Density & Shape
+		threshold: 0.16,
+		range: 0.12,
+		opacity: 0.76,
+		absorption: 1.95,
+		steps: 56,
+		exposure: 1.28,
+		contrast: 1.1,
+
+		// Detail & Motion
+		detailScale: 2.3,
+		detailStrength: 0.46,
+		warpStrength: 0.14,
+		warpScale: 1.4,
+		windX: 0.035,
+		windY: 0.055,
+		windZ: 0.015,
+		rotationSpeed: 0.08,
+		volumeScale: 1.55,
+
+		// Background
+		bgTop: '#060104',
+		bgMid: '#12030a',
+		bgBottom: '#210612',
+
+		// Volume generator
+		noiseScale: 0.055,
+		noiseOctaves: 4,
+		noiseTurbulence: 0.48,
+		tendrils: 0.72,
+		falloffPower: 1.55,
+		seed: 13.7
 	},
 
 	'Cyber Cyan / Mint (Sharp Smoke)': {
